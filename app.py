@@ -8,14 +8,15 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="Portal de Expedição", layout="centered")
 st.title("🚚 Portal de Expedição - Motoristas")
 
-# Gera automaticamente o nome da aba no padrão "dia/mês - AM" (fuso horário de Brasília/SP)
+# Define automaticamente a aba do dia no padrão "dia/mês - AM" (Fuso de São Paulo)
 fuso_sp = ZoneInfo("America/Sao_Paulo")
-aba_hoje = datetime.now(fuso_sp).strftime("%d/%m - AM")
+aba_planilha = datetime.now(fuso_sp).strftime("%d/%m - AM")
+# Caso queira fixar uma aba específica para testes, descomente a linha abaixo:
+# aba_planilha = "19/11 - AM"
 
-# Campo no topo já preenchido com a data de hoje, mas editável caso precise abrir outro dia
-aba_planilha = st.text_input("📅 Aba da expedição (padrão dia/mês - AM):", value=aba_hoje).strip()
+st.caption(f"📅 Expedição do dia: **{aba_planilha}**")
 
-# Conectando ao Google Sheets usando [connections.gsheets] dos Secrets
+# Conectando ao Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_dados(nome_aba):
@@ -23,84 +24,176 @@ def carregar_dados(nome_aba):
     df_lido.columns = df_lido.columns.astype(str).str.strip()
     return df_lido
 
-try:
-    df = carregar_dados(aba_planilha)
-except Exception as e:
-    st.error(f"Não foi possível abrir a aba **'{aba_planilha}'**. Verifique se ela já foi criada na planilha.")
-    st.stop()
+def verificar_compatibilidade(veiculo_motorista, veiculo_rota):
+    """
+    Define a hierarquia de compatibilidade de veículos:
+    - CAMINHÃO atende qualquer rota
+    - VAN atende VAN, FIORINO e PASSEIO
+    - FIORINO atende FIORINO e PASSEIO
+    - PASSEIO atende apenas PASSEIO (ou rotas sem restrição)
+    """
+    hierarquia = {
+        "PASSEIO": ["PASSEIO", ""],
+        "FIORINO": ["FIORINO", "PASSEIO", ""],
+        "VAN": ["VAN", "FIORINO", "PASSEIO", ""],
+        "CAMINHÃO": ["CAMINHÃO", "VAN", "FIORINO", "PASSEIO", ""]
+    }
+    permitidos = hierarquia.get(veiculo_motorista.upper(), [veiculo_motorista.upper()])
+    return veiculo_rota.upper() in permitidos
 
-# Verifica se a coluna 'ID' existe
-if 'ID' not in df.columns:
-    st.error(f"Coluna 'ID' não encontrada na aba '{aba_planilha}'.")
-    st.write("Colunas encontradas:", list(df.columns))
-    st.stop()
+# Inicializa estado da sessão para o cadastro do motorista
+if "motorista_cadastrado" not in st.session_state:
+    st.session_state.motorista_cadastrado = False
+    st.session_state.dados_motorista = {}
 
-# Limpa a coluna ID (remove '.0' caso o Google Sheets envie como número decimal e trata vazios)
-df['ID'] = df['ID'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+# ==============================================================================
+# ETAPA 1: CADASTRO DO MOTORISTA
+# ==============================================================================
+if not st.session_state.motorista_cadastrado:
+    st.subheader("1. Identificação do Motorista")
+    st.write("Preencha seus dados abaixo para visualizar as rotas disponíveis.")
+    
+    with st.form("form_cadastro_motorista"):
+        motorista_id = st.text_input("Seu ID (apenas números):")
+        tipo_veiculo = st.selectbox("Tipo de Veículo:", ["PASSEIO", "FIORINO", "VAN", "CAMINHÃO"])
+        telefone = st.text_input("Telefone para contato (com DDD):", placeholder="Ex: 11999999999")
+        
+        btn_continuar = st.form_submit_button("Ver Rotas Disponíveis", use_container_width=True)
+        
+        if btn_continuar:
+            id_limpo = motorista_id.strip()
+            tel_limpo = telefone.strip()
+            
+            if not id_limpo or not tel_limpo:
+                st.warning("⚠️ Por favor, preencha seu ID e telefone para contato.")
+            elif not id_limpo.isdigit():
+                st.warning("⚠️ O ID deve conter apenas números.")
+            else:
+                st.session_state.dados_motorista = {
+                    "id": id_limpo,
+                    "veiculo": tipo_veiculo,
+                    "telefone": tel_limpo
+                }
+                st.session_state.motorista_cadastrado = True
+                st.rerun()
 
-# Remove linhas em branco da planilha (onde AT está vazio)
-df['AT'] = df['AT'].fillna('').astype(str).str.strip()
-df_valido = df[df['AT'] != ''].copy()
-
-# Filtra apenas rotas sem ID preenchido
-df_disponiveis = df_valido[df_valido['ID'].isin(['', 'nan', 'None', '<NA>'])]
-
-if df_disponiveis.empty:
-    st.info(f"Nenhuma rota disponível na aba '{aba_planilha}'. Todas já foram atribuídas!")
+# ==============================================================================
+# ETAPA 2: VISUALIZAÇÃO EM CARTÕES E SELEÇÃO DE ROTAS
+# ==============================================================================
 else:
-    st.subheader(f"Rotas Disponíveis ({len(df_disponiveis)})")
+    dados_mot = st.session_state.dados_motorista
     
-    # Colunas da sua base que serão mostradas ao motorista
-    colunas_visiveis = ['AT', 'GAIOLA', 'Veiculo', 'CLUSTER', 'BAIRRO']
-    colunas_existentes = [col for col in colunas_visiveis if col in df_disponiveis.columns]
+    # Cabeçalho compacto com os dados do motorista e botão para corrigir cadastro
+    col_info, col_sair = st.columns([3, 1])
+    with col_info:
+        st.info(f"👤 **ID:** {dados_mot['id']} | 🚐 **Veículo:** {dados_mot['veiculo']} | 📞 **Tel:** {dados_mot['telefone']}")
+    with col_sair:
+        if st.button("Alterar Dados", use_container_width=True):
+            st.session_state.motorista_cadastrado = False
+            st.rerun()
+
+    # Lê a planilha do dia
+    try:
+        df = carregar_dados(aba_planilha)
+    except Exception:
+        st.error(f"A planilha da expedição **{aba_planilha}** ainda não está disponível. Aguarde a liberação.")
+        st.stop()
+
+    # Garante leitura limpa da coluna Q (ID) e coluna A (AT)
+    df['ID'] = df['ID'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    df['AT'] = df['AT'].fillna('').astype(str).str.strip()
     
-    st.dataframe(df_disponiveis[colunas_existentes], use_container_width=True, hide_index=True)
+    # Verifica se este motorista JÁ possui uma rota atribuída hoje
+    rota_existente = df[df['ID'] == dados_mot['id']]
+    if not rota_existente.empty:
+        gaiola_atual = rota_existente.iloc[0].get('GAIOLA', 'N/A')
+        at_atual = rota_existente.iloc[0].get('AT', 'N/A')
+        st.success(f"✅ Você já possui uma rota confirmada para hoje!\n\n**Gaiola:** {gaiola_atual} | **Rota (AT):** {at_atual}")
+        st.stop()
+
+    # Filtra linhas válidas e sem ID preenchido
+    df_valido = df[df['AT'] != ''].copy()
+    df_disponiveis = df_valido[df_valido['ID'].isin(['', 'nan', 'None', '<NA>'])].copy()
+
+    if df_disponiveis.empty:
+        st.warning("Nenhuma rota disponível no momento. Todas as gaiolas já foram preenchidas!")
+        st.stop()
+
+    st.subheader(f"2. Selecione suas opções de rota ({len(df_disponiveis)} disponíveis)")
+    st.caption("Você pode marcar mais de uma opção por ordem de preferência. O sistema atribuirá **apenas 1 rota** compatível com o seu veículo.")
+
+    # Renderiza os cartões em grade de 2 colunas
+    rotas_selecionadas = []
+    cols = st.columns(2)
+    
+    for i, (_, row) in enumerate(df_disponiveis.iterrows()):
+        at_codigo = row['AT']
+        gaiola = str(row.get('GAIOLA', 'Sem Gaiola')).strip()
+        veiculo_req = str(row.get('Veiculo', '')).strip().upper()
+        cluster = str(row.get('CLUSTER', '-')).strip()
+        bairro = str(row.get('BAIRRO', '-')).strip()
+        
+        # Resumo dos bairros para não poluir o cartão
+        bairro_resumo = bairro[:65] + "..." if len(bairro) > 65 else bairro
+        compativel = verificar_compatibilidade(dados_mot['veiculo'], veiculo_req)
+        
+        with cols[i % 2]:
+            with st.container(border=True):
+                # GAIOLA como informação principal em destaque
+                st.markdown(f"### 📦 Gaiola {gaiola}")
+                st.markdown(f"**Veículo:** `{veiculo_req}` | **Cluster:** {cluster}")
+                st.caption(f"📍 {bairro_resumo}")
+                st.caption(f"🔑 AT: {at_codigo}")
+                
+                if compativel:
+                    selecionado = st.checkbox(f"Selecionar Gaiola {gaiola}", key=f"chk_{at_codigo}")
+                    if selecionado:
+                        rotas_selecionadas.append(at_codigo)
+                else:
+                    st.button(f"Exige {veiculo_req}", key=f"dis_{at_codigo}", disabled=True, use_container_width=True)
 
     st.divider()
-    st.subheader("Solicitar Rota")
     
-    with st.form("form_solicitacao"):
-        motorista_id = st.text_input("Digite o seu ID:")
-        tipo_veiculo = st.selectbox("Qual o seu veículo?", ["PASSEIO", "FIORINO", "VAN", "CAMINHÃO"])
-        
-        opcoes_display = [
-            f"{row['AT']} | Gaiola: {row.get('GAIOLA', '')} ({row.get('Veiculo', '')})"
-            for _, row in df_disponiveis.iterrows()
-        ]
-        mapa_opcoes = dict(zip(opcoes_display, df_disponiveis['AT'].tolist()))
-        
-        escolha_display = st.selectbox("Selecione a rota:", opcoes_display)
-        rota_escolhida = mapa_opcoes[escolha_display]
-        
-        submit = st.form_submit_button("Confirmar Solicitação")
-        
-        if submit:
-            id_limpo = motorista_id.strip()
-            if not id_limpo:
-                st.warning("Por favor, preencha o seu ID.")
-            else:
-                # Releitura em tempo real (ttl=0) antes de gravar para evitar conflitos
+    # Botão de envio fixo ao final da seleção
+    if st.button("🚀 Enviar Solicitação", type="primary", use_container_width=True):
+        if not rotas_selecionadas:
+            st.warning("⚠️ Selecione pelo menos uma gaiola antes de enviar.")
+        else:
+            with st.spinner("Verificando disponibilidade e compatibilidade..."):
+                # Releitura em tempo real (ttl=0) antes de gravar
                 df_atualizado = carregar_dados(aba_planilha)
                 df_atualizado['ID'] = df_atualizado['ID'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                 df_atualizado['AT'] = df_atualizado['AT'].fillna('').astype(str).str.strip()
                 
-                idx_rota = df_atualizado[df_atualizado['AT'] == rota_escolhida].index[0]
-                id_atual = df_atualizado.at[idx_rota, 'ID']
+                # Dupla checagem: garante que o motorista não pegou rota em outra aba/dispositivo
+                if not df_atualizado[df_atualizado['ID'] == dados_mot['id']].empty:
+                    st.error("Este ID já possui uma rota atribuída na planilha.")
+                    st.rerun()
                 
-                if id_atual in ['', 'nan', 'None', '<NA>']:
-                    veiculo_rota = str(df_atualizado.at[idx_rota, 'Veiculo']).strip().upper()
-                    
-                    if veiculo_rota == 'FIORINO' and tipo_veiculo != 'FIORINO':
-                        st.error(f"Esta rota exige veículo FIORINO. Você selecionou {tipo_veiculo}.")
-                    else:
-                        # Atribui o ID na linha correspondente
-                        df_atualizado.at[idx_rota, 'ID'] = id_limpo
+                rota_atribuida = None
+                gaiola_atribuida = None
+                
+                # Percorre as rotas marcadas pelo motorista e pega APENAS A PRIMEIRA livre e compatível
+                for at_escolhida in rotas_selecionadas:
+                    filtro_linha = df_atualizado[df_atualizado['AT'] == at_escolhida]
+                    if not filtro_linha.empty:
+                        idx = filtro_linha.index[0]
+                        id_na_planilha = df_atualizado.at[idx, 'ID']
+                        veic_na_planilha = str(df_atualizado.at[idx, 'Veiculo']).strip().upper()
                         
-                        # Salva de volta na aba do dia no Google Sheets
-                        conn.update(worksheet=aba_planilha, data=df_atualizado)
-                        
-                        st.success(f"Sucesso! A rota {rota_escolhida} foi atribuída ao ID {id_limpo}.")
-                        st.rerun()
+                        # Verifica se continua vazia E se o veículo é compatível
+                        if id_na_planilha in ['', 'nan', 'None', '<NA>'] and verificar_compatibilidade(dados_mot['veiculo'], veic_na_planilha):
+                            # Preenche SOMENTE a coluna ID (Coluna Q)
+                            df_atualizado.at[idx, 'ID'] = dados_mot['id']
+                            rota_atribuida = at_escolhida
+                            gaiola_atribuida = df_atualizado.at[idx, 'GAIOLA']
+                            break  # Para imediatamente após preencher 1 única rota!
+                
+                if rota_atribuida:
+                    conn.update(worksheet=aba_planilha, data=df_atualizado)
+                    st.success(f"🎉 Solicitação confirmada! A **Gaiola {gaiola_atribuida}** ({rota_atribuida}) foi atribuída ao seu ID **{dados_mot['id']}**.")
+                    st.balloons()
+                    st.rerun()
                 else:
-                    st.error("Poxa, outro motorista acabou de pegar essa rota! Tente outra.")
+                    st.error("😕 As rotas selecionadas acabaram de ser preenchidas por outros motoristas ou não são compatíveis. Escolha outras opções!")
                     st.rerun()

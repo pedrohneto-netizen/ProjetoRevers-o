@@ -6,13 +6,14 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="Portal de Expedição", layout="centered")
 st.title("🚚 Portal de Expedição - Motoristas")
 
-# Conectando ao Google Sheets
-# Lembre-se de configurar os secrets no Streamlit (.streamlit/secrets.toml)
+# Conectando ao Google Sheets usando [connections.gsheets] dos Secrets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Lendo os dados da aba específica
+# Nome exato da aba na planilha
 aba_planilha = "Plano de expedição"
-df = conn.read(worksheet=aba_planilha)
+
+# ttl=0 garante leitura em tempo real sem cache desatualizado
+df = conn.read(worksheet=aba_planilha, ttl=0)
 
 # Garantir que a coluna ID seja tratada como string para facilitar o filtro
 if 'ID' in df.columns:
@@ -29,57 +30,50 @@ if df_disponiveis.empty:
 else:
     st.subheader("Rotas Disponíveis")
     
-    # Exibir tabela para os motoristas (Ajuste as colunas conforme sua necessidade)
-    # Pela sua planilha, algumas colunas interessantes são: AT, GAIOLA, Zipcode, CEP, Veiculo, CLUSTER
+    # Colunas visíveis para os motoristas
     colunas_visiveis = ['AT', 'GAIOLA', 'Veiculo', 'CLUSTER']
     colunas_existentes = [col for col in colunas_visiveis if col in df_disponiveis.columns]
     
-    st.dataframe(df_disponiveis[colunas_existentes], use_container_width=True)
+    st.dataframe(df_disponiveis[colunas_existentes], use_container_width=True, hide_index=True)
 
     st.divider()
     st.subheader("Solicitar Rota")
     
-    # Formulário para o motorista preencher
     with st.form("form_solicitacao"):
         motorista_id = st.text_input("Digite o seu ID:")
         tipo_veiculo = st.selectbox("Qual o seu veículo?", ["PASSEIO", "FIORINO", "VAN", "CAMINHÃO"])
         
-        # Opções de rotas baseadas na disponibilidade
         opcoes_rotas = df_disponiveis['AT'].tolist() if 'AT' in df_disponiveis.columns else df_disponiveis.index.tolist()
         rota_escolhida = st.selectbox("Selecione a rota (AT):", opcoes_rotas)
         
         submit = st.form_submit_button("Confirmar Solicitação")
         
         if submit:
-            if not motorista_id:
+            if not motorista_id.strip():
                 st.warning("Por favor, preencha o seu ID.")
             else:
-                # Localizar o índice da rota selecionada
-                if 'AT' in df.columns:
-                    idx_rota = df[df['AT'] == rota_escolhida].index[0]
+                # Releitura em tempo real (ttl=0) antes de gravar para evitar conflitos
+                df_atualizado = conn.read(worksheet=aba_planilha, ttl=0)
+                df_atualizado['ID'] = df_atualizado['ID'].fillna('').astype(str)
+                
+                if 'AT' in df_atualizado.columns:
+                    idx_rota = df_atualizado[df_atualizado['AT'] == rota_escolhida].index[0]
                 else:
                     idx_rota = rota_escolhida
                 
-                # Validação de concorrência: verifica se a rota AINDA está vazia direto no df lido agora
-                # Em um ambiente com muitos acessos simultâneos, o ideal é reler a base antes de gravar
-                df_atualizado = conn.read(worksheet=aba_planilha)
-                id_atual = str(df_atualizado.at[idx_rota, 'ID']).strip()
+                id_atual = df_atualizado.at[idx_rota, 'ID'].strip()
                 
-                if id_atual == '' or id_atual == 'nan':
-                    # Lógica de priorização simples: se a rota pede Fiorino e o motorista tem Passeio, podemos alertar
-                    veiculo_rota = str(df_atualizado.at[idx_rota, 'Veiculo']).strip().upper()
+                if id_atual == '' or id_atual.lower() == 'nan':
+                    veiculo_rota = str(df_atualizado.at[idx_rota, 'Veiculo']).strip().upper() if 'Veiculo' in df_atualizado.columns else ''
                     
                     if veiculo_rota == 'FIORINO' and tipo_veiculo != 'FIORINO':
                         st.error(f"Esta rota tem prioridade/exigência para FIORINO. Seu veículo é {tipo_veiculo}.")
                     else:
-                        # Preenche o ID do motorista na linha correspondente
-                        df_atualizado.at[idx_rota, 'ID'] = motorista_id
-                        
-                        # Atualiza a planilha do Google
+                        df_atualizado.at[idx_rota, 'ID'] = motorista_id.strip()
                         conn.update(worksheet=aba_planilha, data=df_atualizado)
                         
                         st.success(f"Sucesso! A rota {rota_escolhida} foi atribuída ao ID {motorista_id}.")
-                        st.rerun() # Recarrega a página para atualizar a tabela
+                        st.rerun()
                 else:
                     st.error("Poxa, outro motorista acabou de pegar essa rota! Tente outra.")
                     st.rerun()

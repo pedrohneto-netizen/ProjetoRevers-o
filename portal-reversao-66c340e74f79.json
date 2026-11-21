@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "portal-reversao",
+  "private_key_id": "66c340e74f79957cccb742321d2b193060f009a4",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDgUqikGpaGZIo8\nU7swz5MqEf45u5jRCsyFENnZ3QDltC9/cnEfp9LiuEtRBR/vXAH6xwcQdboIRzrF\nJdS22ZwAUYdKzBOldo5EBXlyOpXVWU3AztqlmHFcV72vHrPrgU+BcjZGTyHnsmj9\ni6wEC6oP9L7F4GW7t4ao4JP3ocQm7+5rtVvb5RJB3c14izsQQ2XpLu0jTxgqjpBu\nZmlH55KR002Pc6b6M0scT5WXhCc4QIZa9rKtC7orFqbeCKTjAopD8kRTgZnKa6B6\nzFsbDdy/aCaX6S0iLYYWxu6uKuJNTTRc2Xa647cUAC9cph2rxbhU7fAzH9CoLPqZ\nqqa/YuEVAgMBAAECggEAVWCwhfEGrHT0thxKSTwf72m0wGV5tsps6BJvT//RGRw4\n3cGBc8JsvdTV+arBKlly+W8p7aZZHVB6+lE5QjTVrrtZCmtc6OOUJyiMPiE1KOQZ\n91HjnxZDwxkz/URqxy5Kw+Jj7OOubGCXnDS+TjXgTr1gpLCRF960lm8Pcjc0EHsX\njLuAdBSTen6XSXOQp6cZdYIs47mZOCtmYCla+cYJ+tYLcv5gr722uku+889KiOrz\nD7Xx3zJVBIVXMhWPU2m/JFvhYS9mNRKIeLFzIxbqR9buKcVqauTqetuJhC29llCq\n3VKpBVVsfldly8cC/5sZheHVxA7XEgGSYKjPRyFoewKBgQD/5pspwDUPOHeyJl4Z\nIcKr+giP2MxYLGjBoDJhPoqgBXHu3XkmMHumN3+Gs8CHRFePlLPhl2vuM9ttPK93\nKTwOUFzRR2Z8ScGZjHXLoXGxX2UodRg/Fz0p+a4isN2lztACFREgqL6YY0nl7tx8\nEZ5QntiILXdtdabOYbCVbP6Z5wKBgQDgaOtH4CPjSrvP0HImxL1B6k8z5T5xoBmE\nZt2rmtvubdD5Xcai3EzGFwqDyCNlvN+w/kxIn6LswMa7AkV2xOUOw/JqheV5y28o\nLSJhBK5Q65q3+DfKcRCFVT3SliN4/rw9ymmJZF0wgnT7D/vnFoHFb1iT0kYkSRoH\n1/EzbqOlowKBgFQjUmkL1WZHvrNIgi/pNcSt1RrWwXlMQLVJIsdudM3gfHF5SFgS\nINWp8bgsaeUPx2piDjLiQo5zZnYoOdkIKcLbEWmN/FhpN8pwsFpfnq4fG3eN6Ib1\n8RpYCbVGSdo2gZXtr0/5q5EXNDjxrHTupgsD71X2/Ql0YYACBrlauOuJAoGBAMDo\nUEEUI6WSq8pkJIzBGPQdyIIS8c/ZUbYoeyu2TpMyoa6Ld2Kuv+yVB/vqwssFRsGu\niMLxP6wHt44w0KfdcA52UOBTQ8WkJGTED8aYsIRtVC4LWWJUOWB0u1VYrRuo1wbD\nBmAN/7Hgo1DjF6c6CMpBAkLoQlWU5aSSdAzDcjfDAoGAINxfZnnqu01OWyDZwhIp\niILFWwLokTr4Vg3cowos0cD1gttDECxWraqo0oFa3zkBAjqCNvmFbN3/4hKJa4rV\neWy28qjOYSIrONvdHdUPoZOgynb1h2RRHFMvA/n248X5v3u/m8SG7O6ChdR//B36\nA8bLwIbsv2fslpIsddjYnIE=\n-----END PRIVATE KEY-----\n",
+  "client_email": "projeto-revers-o@portal-reversao.iam.gserviceaccount.com",
+  "client_id": "108033902347274856993",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/projeto-revers-o%40portal-reversao.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

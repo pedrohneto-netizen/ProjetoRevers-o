@@ -1,50 +1,57 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from streamlit_gsheets import GSheetsConnection
 
 # Configuração da página
 st.set_page_config(page_title="Portal de Expedição", layout="centered")
 st.title("🚚 Portal de Expedição - Motoristas")
 
+# Gera automaticamente o nome da aba no padrão "dia/mês - AM" (fuso horário de Brasília/SP)
+fuso_sp = ZoneInfo("America/Sao_Paulo")
+aba_hoje = datetime.now(fuso_sp).strftime("%d/%m - AM")
+
+# Campo no topo já preenchido com a data de hoje, mas editável caso precise abrir outro dia
+aba_planilha = st.text_input("📅 Aba da expedição (padrão dia/mês - AM):", value=aba_hoje).strip()
+
 # Conectando ao Google Sheets usando [connections.gsheets] dos Secrets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Nome exato da aba na planilha
-aba_planilha = "Plano de expedição"
+def carregar_dados(nome_aba):
+    df_lido = conn.read(worksheet=nome_aba, ttl=0)
+    df_lido.columns = df_lido.columns.astype(str).str.strip()
+    return df_lido
 
-# Função auxiliar para ler e padronizar colunas
-def carregar_dados():
-    # Se o cabeçalho não estiver na linha 1 da planilha, adicione header=1 (linha 2), header=2 (linha 3), etc.
-    dados = conn.read(worksheet=aba_planilha, ttl=0)
-    dados.columns = dados.columns.astype(str).str.strip()
-    return dados
-
-df = carregar_dados()
-
-# Verifica se 'ID' existe (mesmo se estiver em minúsculo, como 'id' ou 'Id')
-colunas_maiusculas = {col.upper(): col for col in df.columns}
-
-if 'ID' in colunas_maiusculas:
-    nome_real_coluna_id = colunas_maiusculas['ID']
-    df.rename(columns={nome_real_coluna_id: 'ID'}, inplace=True)
-    df['ID'] = df['ID'].fillna('').astype(str)
-else:
-    st.error("Coluna 'ID' não encontrada na planilha.")
-    st.warning(f"Colunas que o sistema encontrou na linha 1 da aba '{aba_planilha}':")
-    st.write(list(df.columns))
-    st.dataframe(df.head(5), use_container_width=True)
+try:
+    df = carregar_dados(aba_planilha)
+except Exception as e:
+    st.error(f"Não foi possível abrir a aba **'{aba_planilha}'**. Verifique se ela já foi criada na planilha.")
     st.stop()
 
-# Filtrando apenas rotas sem ID preenchido
-df_disponiveis = df[df['ID'].str.strip().isin(['', 'nan', 'None'])]
+# Verifica se a coluna 'ID' existe
+if 'ID' not in df.columns:
+    st.error(f"Coluna 'ID' não encontrada na aba '{aba_planilha}'.")
+    st.write("Colunas encontradas:", list(df.columns))
+    st.stop()
+
+# Limpa a coluna ID (remove '.0' caso o Google Sheets envie como número decimal e trata vazios)
+df['ID'] = df['ID'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+
+# Remove linhas em branco da planilha (onde AT está vazio)
+df['AT'] = df['AT'].fillna('').astype(str).str.strip()
+df_valido = df[df['AT'] != ''].copy()
+
+# Filtra apenas rotas sem ID preenchido
+df_disponiveis = df_valido[df_valido['ID'].isin(['', 'nan', 'None', '<NA>'])]
 
 if df_disponiveis.empty:
-    st.info("Nenhuma rota disponível no momento. Todas já foram atribuídas!")
+    st.info(f"Nenhuma rota disponível na aba '{aba_planilha}'. Todas já foram atribuídas!")
 else:
-    st.subheader("Rotas Disponíveis")
+    st.subheader(f"Rotas Disponíveis ({len(df_disponiveis)})")
     
-    # Colunas visíveis para os motoristas
-    colunas_visiveis = ['AT', 'GAIOLA', 'Veiculo', 'CLUSTER']
+    # Colunas da sua base que serão mostradas ao motorista
+    colunas_visiveis = ['AT', 'GAIOLA', 'Veiculo', 'CLUSTER', 'BAIRRO']
     colunas_existentes = [col for col in colunas_visiveis if col in df_disponiveis.columns]
     
     st.dataframe(df_disponiveis[colunas_existentes], use_container_width=True, hide_index=True)
@@ -56,40 +63,43 @@ else:
         motorista_id = st.text_input("Digite o seu ID:")
         tipo_veiculo = st.selectbox("Qual o seu veículo?", ["PASSEIO", "FIORINO", "VAN", "CAMINHÃO"])
         
-        opcoes_rotas = df_disponiveis['AT'].tolist() if 'AT' in df_disponiveis.columns else df_disponiveis.index.tolist()
-        rota_escolhida = st.selectbox("Selecione a rota (AT):", opcoes_rotas)
+        opcoes_display = [
+            f"{row['AT']} | Gaiola: {row.get('GAIOLA', '')} ({row.get('Veiculo', '')})"
+            for _, row in df_disponiveis.iterrows()
+        ]
+        mapa_opcoes = dict(zip(opcoes_display, df_disponiveis['AT'].tolist()))
+        
+        escolha_display = st.selectbox("Selecione a rota:", opcoes_display)
+        rota_escolhida = mapa_opcoes[escolha_display]
         
         submit = st.form_submit_button("Confirmar Solicitação")
         
         if submit:
-            if not motorista_id.strip():
+            id_limpo = motorista_id.strip()
+            if not id_limpo:
                 st.warning("Por favor, preencha o seu ID.")
             else:
                 # Releitura em tempo real (ttl=0) antes de gravar para evitar conflitos
-                df_atualizado = carregar_dados()
-                df_atualizado.rename(columns={nome_real_coluna_id: 'ID'}, inplace=True)
-                df_atualizado['ID'] = df_atualizado['ID'].fillna('').astype(str)
+                df_atualizado = carregar_dados(aba_planilha)
+                df_atualizado['ID'] = df_atualizado['ID'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                df_atualizado['AT'] = df_atualizado['AT'].fillna('').astype(str).str.strip()
                 
-                if 'AT' in df_atualizado.columns:
-                    idx_rota = df_atualizado[df_atualizado['AT'] == rota_escolhida].index[0]
-                else:
-                    idx_rota = rota_escolhida
+                idx_rota = df_atualizado[df_atualizado['AT'] == rota_escolhida].index[0]
+                id_atual = df_atualizado.at[idx_rota, 'ID']
                 
-                id_atual = df_atualizado.at[idx_rota, 'ID'].strip()
-                
-                if id_atual in ['', 'nan', 'None']:
-                    veiculo_rota = str(df_atualizado.at[idx_rota, 'Veiculo']).strip().upper() if 'Veiculo' in df_atualizado.columns else ''
+                if id_atual in ['', 'nan', 'None', '<NA>']:
+                    veiculo_rota = str(df_atualizado.at[idx_rota, 'Veiculo']).strip().upper()
                     
                     if veiculo_rota == 'FIORINO' and tipo_veiculo != 'FIORINO':
-                        st.error(f"Esta rota tem prioridade/exigência para FIORINO. Seu veículo é {tipo_veiculo}.")
+                        st.error(f"Esta rota exige veículo FIORINO. Você selecionou {tipo_veiculo}.")
                     else:
-                        df_atualizado.at[idx_rota, 'ID'] = motorista_id.strip()
+                        # Atribui o ID na linha correspondente
+                        df_atualizado.at[idx_rota, 'ID'] = id_limpo
                         
-                        # Restaura o nome original da coluna antes de salvar, caso fosse 'Id' ou 'id'
-                        df_para_salvar = df_atualizado.rename(columns={'ID': nome_real_coluna_id})
-                        conn.update(worksheet=aba_planilha, data=df_para_salvar)
+                        # Salva de volta na aba do dia no Google Sheets
+                        conn.update(worksheet=aba_planilha, data=df_atualizado)
                         
-                        st.success(f"Sucesso! A rota {rota_escolhida} foi atribuída ao ID {motorista_id}.")
+                        st.success(f"Sucesso! A rota {rota_escolhida} foi atribuída ao ID {id_limpo}.")
                         st.rerun()
                 else:
                     st.error("Poxa, outro motorista acabou de pegar essa rota! Tente outra.")

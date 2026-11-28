@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import requests
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
@@ -115,6 +116,10 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 ABA_CONFIG = "CONFIG_ADMIN"
 FUSO_SP = ZoneInfo("America/Sao_Paulo")
 VALORES_VAZIOS = {"", "nan", "none", "<na>", "null"}
+APPS_SCRIPT_URL_PADRAO = (
+    "https://script.google.com/a/macros/shopee.com/s/"
+    "AKfycbzdMfDbQR1D3lGLGhz9Pb4gCJ5Ca3MGDI8cMgcTWYqzq2GbRXrhejQ6-6vL0ngJJbU39Q/exec"
+)
 
 
 # ==============================================================================
@@ -199,8 +204,16 @@ def gerar_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8-sig")
 
 
+def obter_apps_script_url() -> str:
+    try:
+        cfg_url = limpar_texto(st.secrets.get("apps_script_url", ""))
+        return cfg_url or APPS_SCRIPT_URL_PADRAO
+    except Exception:
+        return APPS_SCRIPT_URL_PADRAO
+
+
 # ==============================================================================
-# FUNÇÕES DE LEITURA E GRAVAÇÃO (GOOGLE SHEETS)
+# FUNÇÕES DE LEITURA E GRAVAÇÃO (GOOGLE SHEETS + APPS SCRIPT)
 # ==============================================================================
 def ler_configuracao():
     aba_padrao = sugerir_aba_padrao()
@@ -270,10 +283,6 @@ def carregar_dados_rotas(nome_aba: str) -> pd.DataFrame:
 
 
 def liberar_rota_admin(nome_aba: str, at_alvo: str, id_esperado: str = "") -> tuple[bool, str]:
-    """
-    Reabre uma rota atribuída para que volte a ficar disponível na planilha.
-    Se id_esperado for informado, exige correspondência do ID antes de limpar.
-    """
     df_atual = carregar_dados_rotas(nome_aba)
     matches = df_atual.index[df_atual["AT"] == at_alvo].tolist()
     if not matches:
@@ -298,6 +307,61 @@ def liberar_rota_admin(nome_aba: str, at_alvo: str, id_esperado: str = "") -> tu
     return True, f"Rota {at_alvo} liberada e disponível novamente."
 
 
+def atribuir_via_apps_script(
+    url: str,
+    nome_aba: str,
+    rotas_preferencia: list[str],
+    motorista_id: str,
+    veiculo_motorista: str,
+    telefone_motorista: str,
+):
+    payload = {
+        "aba": nome_aba,
+        "id": motorista_id,
+        "veiculo": veiculo_motorista,
+        "telefone": telefone_motorista,
+        "preferencias": rotas_preferencia,
+    }
+
+    resp = requests.post(url, json=payload, timeout=20)
+    resp.raise_for_status()
+
+    try:
+        data = resp.json()
+    except ValueError as exc:
+        raise RuntimeError(
+            "O Apps Script respondeu em formato não-JSON (verifique se a implantação permite acesso sem login)."
+        ) from exc
+
+    if data.get("ok"):
+        return (
+            "atribuida",
+            "Solicitação confirmada com sucesso!",
+            {
+                "gaiola": limpar_texto(data.get("gaiola")) or "Sem Gaiola",
+                "at": limpar_texto(data.get("at")) or rotas_preferencia[0],
+                "veiculo": limpar_texto(data.get("veiculo")) or veiculo_motorista,
+            },
+        )
+
+    motivo = limpar_texto(data.get("motivo")).lower()
+    if motivo == "ja_possui":
+        return (
+            "ja_possui",
+            "Este ID já possui uma rota atribuída nesta expedição.",
+            {
+                "gaiola": limpar_texto(data.get("gaiola")) or "N/A",
+                "at": limpar_texto(data.get("at")) or "N/A",
+            },
+        )
+
+    return (
+        "indisponivel",
+        "As opções selecionadas já foram preenchidas ou não são compatíveis com o seu veículo. Atualize suas escolhas.",
+        {},
+    )
+
+
 def atribuir_rota_segura(
     nome_aba: str,
     rotas_preferencia: list[str],
@@ -305,10 +369,17 @@ def atribuir_rota_segura(
     veiculo_motorista: str,
     telefone_motorista: str,
 ):
-    """
-    Revalida os dados no momento do envio e grava a primeira rota compatível disponível.
-    Retorna tupla: (status, mensagem, detalhes_dict)
-    """
+    script_url = obter_apps_script_url()
+    if script_url:
+        return atribuir_via_apps_script(
+            url=script_url,
+            nome_aba=nome_aba,
+            rotas_preferencia=rotas_preferencia,
+            motorista_id=motorista_id,
+            veiculo_motorista=veiculo_motorista,
+            telefone_motorista=telefone_motorista,
+        )
+
     df_atual = carregar_dados_rotas(nome_aba)
 
     existente = df_atual[df_atual["ID"] == motorista_id]
@@ -515,7 +586,6 @@ if st.session_state.is_admin:
         ]
         st.dataframe(df_view[colunas_monitor], use_container_width=True, hide_index=True)
 
-        # Liberação / Reabertura de rota atribuída
         df_atribuidas = df_admin[df_admin["ID"] != ""].copy()
         if not df_atribuidas.empty:
             with st.container(border=True):
